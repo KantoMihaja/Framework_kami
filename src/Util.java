@@ -8,13 +8,23 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.net.MalformedURLException;
 import java.net.http.HttpResponse;
+import java.sql.Date;
+import java.sql.Time;
+import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.lang.reflect.Array;
+
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
@@ -26,63 +36,80 @@ import jakarta.servlet.http.*;
 
 public class Util {
 
-    public static ArrayList<Class<?>> scanClasses(String source, ServletContext servletContext, Class<?> cla)
-            throws MalformedURLException, ClassNotFoundException {
+    public static ArrayList<Class<?>> scanClasses(String source1, String source2, ServletContext servletContext, Class<?> cla)
+    throws MalformedURLException, ClassNotFoundException {
         ArrayList<Class<?>> classes = new ArrayList<>();
 
-        String classPath = servletContext.getResource(source).getPath().substring(1).replace("%20", " ");
+        // Scanner la première source (Controllers)
+        classes.addAll(scanSingleSource(source1, servletContext, cla));
+
+        // Scanner la deuxième source (Models)
+        if (!source1.equals(source2)) {
+            classes.addAll(scanSingleSource(source2, servletContext, cla));
+        }
+
+        return classes;
+    }
+
+    private static ArrayList<Class<?>> scanSingleSource(String source, ServletContext servletContext, Class<?> cla)
+        throws MalformedURLException, ClassNotFoundException {
+        ArrayList<Class<?>> classes = new ArrayList<>();
+
+        String classPath = "/" + servletContext.getResource(source).getPath().substring(1).replace("%20", " ");
+        System.out.println("class path: " + classPath);
         File[] packages = new File(classPath).listFiles();
 
         if (packages != null) {
             for (File pkg : packages) {
                 if (pkg.isFile() && pkg.getName().endsWith(".class")) {
-                    String className = source.substring("WEB-INF.classes".length()).replace('/', '.');
-                    
+                    String className = source.substring("WEB-INF/classes".length()).replace('/', '.');
+
                     if (className.startsWith(".")) {
                         className = className.substring(1);
                     }
                     if (className.length() > 0 && !className.endsWith(".")) {
                         className += ".";
                     }
-                    
-                    className += pkg.getName().substring(0, pkg.getName().length() - ".class".length()).replace('/',
-                    '.');
+
+                    className += pkg.getName().substring(0, pkg.getName().length() - ".class".length()).replace('/', '.');
                     System.out.println("class processed: " + className);
-                    
+
                     Class<?> clazz = Class.forName(className);
                     System.out.println("class: " + clazz);
                     System.out.println(Arrays.toString(clazz.getAnnotations()));
-                    if (clazz.isAnnotationPresent((Class<? extends Annotation>) cla)) {
+                    if (clazz.isAnnotationPresent((Class<? extends java.lang.annotation.Annotation>) cla)) {
                         classes.add(clazz);
                         System.out.println("class added: " + clazz);
                     }
                     System.out.println();
-                }
-                
-                else if (pkg.isDirectory()) {
+                } else if (pkg.isDirectory()) {
                     System.out.println("directory found: " + pkg);
-                    classes.addAll(scanClasses(source + "/" + pkg.getName(), servletContext, cla));
+                    classes.addAll(scanSingleSource(source + "/" + pkg.getName(), servletContext, cla));
                 }
             }
+        } else {
+            System.out.println("packages null for source: " + source);
         }
         return classes;
     }
 
     public static HashMap<String, Mapping> getUrlMapping(ArrayList<Class<?>> controllers)
-        throws CustomException.BuildException {
+    throws CustomException.BuildException {
+
         HashMap<String, Mapping> urlMapping = new HashMap<>();
-        boolean classAnnotedAUth = false;
-        String profil="";
+        boolean classAnnotedAuth = false;
+        String profil = "";
+
         for (Class<?> clazz : controllers) {
 
-            if(clazz.isAnnotationPresent(framework.Annotation.Auth.class)){
-                classAnnotedAUth = true;
+            if (clazz.isAnnotationPresent(framework.Annotation.Auth.class)) {
+                classAnnotedAuth = true;
                 profil = clazz.getAnnotation(framework.Annotation.Auth.class).value();
+                System.out.println(clazz.getName() + " is annoted Auth");
             }
 
             Method[] methods = clazz.getDeclaredMethods();
             for (Method method : methods) {
-                
                 if (method.isAnnotationPresent(framework.Annotation.Url.class)) {
                     String url = method.getAnnotation(framework.Annotation.Url.class).value();
                     VerbeAction verbeAction = new VerbeAction();
@@ -92,20 +119,20 @@ public class Util {
                     if (!urlMapping.containsKey(url)) {
                         Mapping mapping = new Mapping();
 
-                        if(classAnnotedAUth){
+                        if (classAnnotedAuth) {
                             mapping.setNeedAuth(true);
                             mapping.setProfil(profil);
+                            System.out.println(method.getName() + " is annoted Auth");
                         }
 
                         if (method.isAnnotationPresent(framework.Annotation.Auth.class)) {
-
-                            if(classAnnotedAUth){
-                                throw new CustomException.BuildException(clazz.getName() +" is already annoted Auth , remove @Auth on method");
+                            if (classAnnotedAuth) {
+                                throw new CustomException.BuildException(clazz.getName() + " is already annoted @Auth, remove @Auth on method");
                             }
-
                             profil = method.getAnnotation(framework.Annotation.Auth.class).value();
                             mapping.setNeedAuth(true);
                             mapping.setProfil(profil);
+                            System.out.println(method.getName() + " is annoted Auth");
                         }
 
                         mapping.setClassName(clazz.getName());
@@ -116,10 +143,9 @@ public class Util {
                         Mapping existingMapping = urlMapping.get(url);
                         existingMapping.getVerbeActions().add(verbeAction);
                     }
-                    
                 }
             }
-            classAnnotedAUth = false;
+            classAnnotedAuth = false;
         }
         return urlMapping;
     }
@@ -223,7 +249,7 @@ public class Util {
         
         return null;
     }
-    public static void checkAuthProfil(Mapping mapping,HttpServletRequest req,String hote_name)throws CustomException.RequestException{
+    public static StatusCode checkAuthProfil(Mapping mapping,HttpServletRequest req,String hote_name)throws CustomException.RequestException{
         String hote = "hote";
         if(hote_name != null && hote_name != ""){
             hote = hote_name;
@@ -231,11 +257,13 @@ public class Util {
         
         if (mapping.isNeedAuth()) {
             if(!mapping.getProfil().equals(req.getSession().getAttribute(hote))){
-                throw new CustomException.RequestException("unauthorize");
+                return new StatusCode(401,"Unauthorise",false,"");
             }
         }
+        return null;
     }
-    public static ResponsePage processUrl(HashMap<String, Mapping> urlMapping, PrintWriter out, HttpServletRequest req, HttpServletResponse res, ArrayList<Class<?>> controleurs,String hote_name){
+    public static ResponsePage processUrl(HashMap<String, Mapping> urlMapping, PrintWriter out, HttpServletRequest req, HttpServletResponse res, ArrayList<Class<?>> controleurs,String hote_name)throws CustomException.BuildException ,
+    CustomException.RequestException , Exception{
         Object urlValue = null;
         boolean trouve = false;
         String html = "";
@@ -247,13 +275,13 @@ public class Util {
             for (Map.Entry<String, Mapping> entree : urlMapping.entrySet()) {
                 String cle = entree.getKey();
                 Mapping valeur = entree.getValue();
-                try {
-                    checkAuthProfil(valeur,req,hote_name);
-                } catch (CustomException.RequestException e) {
-                    return new ResponsePage(new StatusCode(401, "unauthorize", false, e.getMessage()), html);
-                }
-
+                
                 if (cle.equals(url)) {
+                    valeur.getClassName();
+
+                    if(checkAuthProfil(valeur,req,hote_name)!=null)
+                        return  new ResponsePage(checkAuthProfil(valeur,req,hote_name),html);
+
                     VerbeAction matchingVerbe = null;
                     for (VerbeAction verbeAction : valeur.getVerbeActions()) {
                         if (verbeAction.getVerbe().equalsIgnoreCase(req.getMethod())) {
@@ -304,9 +332,14 @@ public class Util {
             }
             
             return new ResponsePage(new StatusCode(200, true), html);
+        } catch (CustomException.RequestException e) {
+            e.printStackTrace();
+            throw e; 
         } catch (Exception e) {
-            return new ResponsePage(new StatusCode(500, "internal server error", false, e.getMessage()), html);
+            e.printStackTrace();
+            throw e;
         }
+        
     }
     public static void processStatus(StatusCode statusCode) throws CustomException.BuildException,CustomException.RequestException{
         if (!statusCode.isSuccess() ) {
@@ -354,6 +387,7 @@ public class Util {
                     methodParams[i] = paramObject;
                     
                 } catch (Exception e) {
+                    e.printStackTrace();
                     throw new IllegalArgumentException(
                         "Error creating parameter object: " + paramName, e
                     );
@@ -371,6 +405,7 @@ public class Util {
                     throw new IllegalArgumentException("Missing parameter " + paramName);
                 }
                 methodParams[i] = convertToType(paramValue, paramType);
+                
             }
     
             if (parameters[i].isAnnotationPresent(framework.Annotation.Valid.class)) {
@@ -396,32 +431,106 @@ public class Util {
         
         return new MethodParamResult(methodParams, errorMap, valueMap);
     }
-    
-    private static Object createAndPopulateObject(Class<?> paramType, String paramName, 
-                                                  HttpServletRequest request) throws Exception {
-        Object paramObject = paramType.getDeclaredConstructor().newInstance();
-        Field[] fields = paramType.getDeclaredFields();
+    private static boolean isSpecialType(Class<?> type) {
+        return type == LocalDateTime.class 
+            || type == LocalDate.class 
+            || type == LocalTime.class;
+    }
+
+    private static Object createSpecialTypeInstance(Class<?> type, String value) {
+        if (value == null || value == "")  
+            return null;
         
+        if (type == LocalDateTime.class) {
+            return LocalDateTime.parse(value);
+        } else if (type == LocalDate.class) {
+            return LocalDate.parse(value);
+        } else if (type == LocalTime.class) {
+            return LocalTime.parse(value);
+        }   
+        return null;
+    }
+    
+    public static Object createAndPopulateObject(Class<?> paramType, String paramName, 
+    HttpServletRequest request) throws Exception {
+    
+        // Gérer les tableaux et les listes
+        if (paramType.isArray()) {
+            System.out.println("Détection d'un tableau : " + paramType.getComponentType().getName());
+
+            Class<?> componentType = paramType.getComponentType();
+            List<Object> tempList = new ArrayList<>();
+
+            int i = 0;
+            while (true) {
+                String indexedParam = paramName + "[" + i + "]";
+                boolean foundData = false;
+                Object newObject = createAndPopulateObject(componentType, indexedParam, request);
+
+                if (newObject != null) {
+                    tempList.add(newObject);
+                    foundData = true;
+                }
+
+                if (!foundData) break;
+                i++;
+            }
+
+            return tempList.toArray((Object[]) Array.newInstance(componentType, tempList.size()));
+        }    
+
+        // Gérer les types spéciaux (ex: Date, LocalDateTime)
+        if (isSpecialType(paramType)) {
+            String paramValue = request.getParameter(paramName);
+            return createSpecialTypeInstance(paramType, paramValue);
+        }
+
+        // Gérer les objets complexes
+        Object paramObject;
+        try {
+            paramObject = paramType.getDeclaredConstructor().newInstance();
+        } catch (NoSuchMethodException e) {
+            if (paramType.isInterface()) {
+                return null;
+            }
+            throw e;
+        }
+
+        // Itérer sur les champs de l'objet
+        Field[] fields = paramType.getDeclaredFields();
+        boolean hasData = false;
+
         for (Field field : fields) {
             String fieldName = field.getName();
             String fullParamName = paramName + "." + fieldName;
-            
+            field.setAccessible(true);
+
             if (isSimpleType(field.getType())) {
                 String fieldValue = request.getParameter(fullParamName);
-                
-                if (fieldValue != null) {
-                    field.setAccessible(true);
+                if (fieldValue != null && !fieldValue.isEmpty()) {
                     Object typedValue = convertToType(fieldValue, field.getType());
                     field.set(paramObject, typedValue);
+                    hasData = true;
                 }
             } else {
                 Object nestedObject = createAndPopulateObject(field.getType(), fullParamName, request);
-                field.setAccessible(true);
-                field.set(paramObject, nestedObject);
+                if (nestedObject != null) {
+                    field.set(paramObject, nestedObject);
+                    hasData = true;
+                }
             }
         }
-        
-        return paramObject;
+
+        return hasData ? paramObject : null;
+    }
+
+// Méthode auxiliaire pour obtenir le type générique d'une liste
+    private static Class<?> getGenericType(Class<?> listClass) {
+        Type genericSuperclass = listClass.getGenericSuperclass();
+        if (genericSuperclass instanceof ParameterizedType) {
+            return (Class<?>) ((ParameterizedType) genericSuperclass).getActualTypeArguments()[0];
+        }
+        return Object.class;
     }
     
     private static boolean isSimpleType(Class<?> type) {
@@ -433,6 +542,7 @@ public class Util {
                type.equals(Long.class) ||
                type.equals(Double.class) ||
                type.equals(Float.class) ||
+               type.equals(Date.class) ||
                type.equals(Boolean.class);
     }
 
@@ -440,16 +550,22 @@ public class Util {
         if (paramValue == null || type == null) {
             return null;
         }
-        
-        if (type == String.class) {
-            return paramValue;
-        } else if (type == Integer.class || type == int.class) {
+
+        if (type == Integer.class || type == int.class) {
             return Integer.parseInt(paramValue);
+        } else if (type == Long.class || type == long.class) {
+            return Long.parseLong(paramValue);
         } else if (type == Double.class || type == double.class) {
             return Double.parseDouble(paramValue);
+        } else if (type == Float.class || type == float.class) {
+            return Float.parseFloat(paramValue);
+        } else if (type == Boolean.class || type == boolean.class) {
+            return Boolean.parseBoolean(paramValue);
+        } else if (type == Date.class) {
+            return Date.valueOf(paramValue);
+        } else {
+            return paramValue;
         }
-
-        return null;
     }
 
     public static String capitalize(String inputString) {
